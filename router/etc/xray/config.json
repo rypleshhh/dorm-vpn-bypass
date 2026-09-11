@@ -1,0 +1,142 @@
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "listen": "127.0.0.1",
+      "port": 10808,
+      "protocol": "socks",
+      "settings": {
+        "auth": "noauth",
+        "udp": false
+      },
+      "tag": "socks-in"
+    },
+    {
+      "listen": "0.0.0.0",
+      "port": 12345,
+      "protocol": "dokodemo-door",
+      "settings": {
+        "network": "tcp",
+        "followRedirect": true
+      },
+      "tag": "transparent-in-tcp"
+    },
+    {
+      "listen": "0.0.0.0",
+      "port": 12346,
+      "protocol": "dokodemo-door",
+      "settings": {
+        "network": "udp",
+        "followRedirect": true
+      },
+      "streamSettings": {
+        "sockopt": {
+          "tproxy": "tproxy"
+        }
+      },
+      "tag": "transparent-in-udp"
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "YOUR_VPS_IP",
+            "port": 443,
+            "users": [
+              {
+                "id": "YOUR_UUID",
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "fingerprint": "firefox",
+          "serverName": "www.idealo.de",
+          "publicKey": "YOUR_REALITY_PUBLIC_KEY",
+          "shortId": "YOUR_SHORT_ID"
+        },
+        "sockopt": {
+          "tcpFastOpen": true
+        }
+      },
+      "mux": {
+        "enabled": true,
+        "concurrency": 8
+      },
+      "tag": "proxy"
+    },
+    {
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "YOUR_VPS_IP",
+            "port": 443,
+            "users": [
+              {
+                "id": "YOUR_UUID",
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "fingerprint": "firefox",
+          "serverName": "www.idealo.de",
+          "publicKey": "YOUR_REALITY_PUBLIC_KEY",
+          "shortId": "YOUR_SHORT_ID"
+        },
+        "sockopt": {
+          "tcpFastOpen": true
+        }
+      },
+      "tag": "proxy-udp"
+    },
+    {
+      "protocol": "freedom",
+      "settings": {
+        "domainStrategy": "ForceIPv4"
+      },
+      "tag": "direct"
+    }
+  ],
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+      {
+        "type": "field",
+        "inboundTag": ["transparent-in-tcp"],
+        "outboundTag": "proxy"
+      },
+      {
+        "type": "field",
+        "inboundTag": ["transparent-in-udp"],
+        "outboundTag": "proxy-udp"
+      },
+      {
+        "type": "field",
+        "ip": [
+          "YOUR_VPS_IP/32",
+          "192.168.0.0/16",
+          "10.0.0.0/8",
+          "172.16.0.0/12"
+        ],
+        "outboundTag": "direct"
+      }
+    ]
+  }
+}

@@ -1,0 +1,63 @@
+#!/bin/sh /etc/rc.common
+START=21
+STOP=89
+
+TABLE="xray-udp"
+CHAIN="prerouting"
+PORT="12346"
+LAN_NET="192.168.1.0/24"
+FWMARK="1"
+RT_TABLE="100"
+
+log() {
+    echo "[xray-nft-udp] $*"
+}
+
+ensure_policy_routing() {
+    if ! ip rule show | grep -q "fwmark 0x$(printf '%x' "$FWMARK") lookup $RT_TABLE"; then
+        log "Adding ip rule for fwmark $FWMARK"
+        ip rule add fwmark "$FWMARK" lookup "$RT_TABLE" || return 1
+    fi
+    if ! ip route show table "$RT_TABLE" | grep -q "local default dev lo"; then
+        log "Adding local route in table $RT_TABLE"
+        ip route add local 0.0.0.0/0 dev lo table "$RT_TABLE" || return 1
+    fi
+    return 0
+}
+
+ensure_rules() {
+    # Отдельная таблица в mangle: TPROXY не работает в nat (там живёт
+    # table inet xray для TCP-редиректа), только в filter/mangle prerouting.
+    if ! nft list table inet "$TABLE" >/dev/null 2>&1; then
+        log "Creating table inet $TABLE"
+        nft add table inet "$TABLE" || return 1
+    fi
+    if ! nft list chain inet "$TABLE" "$CHAIN" >/dev/null 2>&1; then
+        log "Creating chain $CHAIN"
+        nft "add chain inet $TABLE $CHAIN { type filter hook prerouting priority mangle - 10; policy accept; }" || return 1
+    fi
+    if ! nft list chain inet "$TABLE" "$CHAIN" 2>/dev/null | grep -q "ip saddr $LAN_NET udp dport 53 accept"; then
+        log "Adding DNS bypass rule"
+        nft "add rule inet $TABLE $CHAIN ip saddr $LAN_NET udp dport 53 accept" || return 1
+    fi
+    if ! nft list chain inet "$TABLE" "$CHAIN" 2>/dev/null | grep -q "tproxy ip to :$PORT"; then
+        log "Adding UDP tproxy rule"
+        nft "add rule inet $TABLE $CHAIN ip saddr $LAN_NET meta l4proto udp counter meta mark set $FWMARK tproxy ip to :$PORT" || return 1
+    fi
+    return 0
+}
+
+start() {
+    log "Starting..."
+    ensure_policy_routing || { log "ERROR: policy routing setup failed"; return 1; }
+    ensure_rules || { log "ERROR: nft rules setup failed"; return 1; }
+    log "Done"
+}
+
+restart() {
+    start
+}
+
+stop() {
+    log "Leaving shared resources intact (not tearing down on stop)"
+}

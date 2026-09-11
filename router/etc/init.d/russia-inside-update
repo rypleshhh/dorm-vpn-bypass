@@ -1,0 +1,87 @@
+#!/bin/sh /etc/rc.common
+# Скачивает актуальный список itdoginfo/allow-domains Russia/inside,
+# конвертирует под нашу схему (#fw4#vpn_domains -> #xray#russia4),
+# атомарно заменяет /etc/dnsmasq.d/russia-inside.conf и рестартует dnsmasq.
+#
+# Xray НЕ перезапускается на обычном обновлении — только dnsmasq.
+# Если GitHub недоступен или список подозрительно маленький — старый
+# список не заменяется.
+#
+# Запускать вручную: /etc/init.d/russia-inside-update restart
+# Cron (еженедельно): 30 7 * * 1 /etc/init.d/russia-inside-update restart >/tmp/russia-inside-update.log 2>&1
+
+START=95
+
+URL="https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Russia/inside-dnsmasq-nfset.lst"
+CONF_FILE="/etc/dnsmasq.d/russia-inside.conf"
+TMP_FILE="/tmp/russia-inside.download"
+NEW_FILE="/tmp/russia-inside.conf.new"
+MIN_LINES=500
+
+log() {
+    echo "[russia-inside] $*"
+}
+
+update() {
+    log "Update started"
+    log "Downloading Russia/inside..."
+
+    rm -f "$TMP_FILE"
+    if ! wget -qO "$TMP_FILE" "$URL"; then
+        log "ERROR: download failed, keeping existing list"
+        rm -f "$TMP_FILE"
+        return 1
+    fi
+
+    sed -i 's/\r$//' "$TMP_FILE"
+    COUNT="$(wc -l < "$TMP_FILE")"
+
+    if [ "$COUNT" -lt "$MIN_LINES" ]; then
+        log "ERROR: downloaded list too small ($COUNT lines), keeping existing list"
+        rm -f "$TMP_FILE"
+        return 1
+    fi
+    log "Downloaded $COUNT domain rules"
+
+    if ! grep -q '^nftset=' "$TMP_FILE"; then
+        log "ERROR: unexpected format in downloaded list, keeping existing list"
+        rm -f "$TMP_FILE"
+        return 1
+    fi
+    log "Source list validation OK"
+
+    sed 's/#fw4#vpn_domains/#xray#russia4/g' "$TMP_FILE" > "$NEW_FILE"
+    NEW_COUNT="$(grep -c '^nftset=' "$NEW_FILE")"
+    log "Converted $NEW_COUNT rules"
+
+    if ! nft list set inet xray russia4 >/dev/null 2>&1; then
+        log "ERROR: nft set inet xray russia4 does not exist, aborting"
+        rm -f "$TMP_FILE" "$NEW_FILE"
+        return 1
+    fi
+
+    if ! dnsmasq --test -C "$NEW_FILE" >/dev/null 2>&1; then
+        log "ERROR: dnsmasq config test failed on new list, keeping existing list"
+        rm -f "$TMP_FILE" "$NEW_FILE"
+        return 1
+    fi
+
+    cp "$CONF_FILE" "${CONF_FILE}.bak" 2>/dev/null
+    mv "$NEW_FILE" "$CONF_FILE"
+    log "Configuration installed"
+
+    /etc/init.d/dnsmasq restart
+    log "dnsmasq restarted"
+
+    rm -f "$TMP_FILE"
+    log "Update completed successfully"
+    return 0
+}
+
+start() {
+    update
+}
+
+restart() {
+    update
+}

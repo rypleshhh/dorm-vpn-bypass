@@ -1,0 +1,9 @@
+# Don't commit filled-in configs with real secrets — keep the
+# placeholder versions in git, apply real values only on the actual
+# devices (or in a local, untracked copy).
+*.local.json
+*.bak-*
+.env
+
+# dnsmasq-generated domain list — downloaded at runtime, not hand-edited
+router/etc/dnsmasq.d/russia-inside.conf

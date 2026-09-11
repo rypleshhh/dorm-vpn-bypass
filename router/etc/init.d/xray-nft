@@ -1,0 +1,180 @@
+#!/bin/sh /etc/rc.common
+START=21
+STOP=89
+
+TABLE="xray"
+SET="telegram4"
+RUSSIA_SET="russia4"
+CHAIN="prerouting"
+PORT="12345"
+LAN_NET="192.168.1.0/24"
+URL="https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Subnets/IPv4/telegram.lst"
+TMP="/tmp/telegram.lst"
+BATCH="/tmp/xray-telegram-update.nft"
+
+log() {
+    echo "[xray-nft] $*"
+}
+
+ensure_rules() {
+    # Общая таблица для TCP-редиректа. Создаётся здесь, а не в
+    # /etc/nftables.d/*.nft, потому что fw4 включает те файлы ВНУТРИ
+    # table inet fw4, и отдельная table там ломает синтаксис firewall.
+    if ! nft list table inet "$TABLE" >/dev/null 2>&1; then
+        log "Creating table inet $TABLE"
+        nft add table inet "$TABLE" || return 1
+    fi
+
+    if ! nft list set inet "$TABLE" "$SET" >/dev/null 2>&1; then
+        log "Creating set $SET"
+        nft "add set inet $TABLE $SET { type ipv4_addr; flags interval; }" || return 1
+    fi
+
+    # Russia/inside set. ВАЖНО: этим set управляет dnsmasq (nftset directive),
+    # xray-nft его только создаёт, но не заполняет.
+    if ! nft list set inet "$TABLE" "$RUSSIA_SET" >/dev/null 2>&1; then
+        log "Creating set $RUSSIA_SET"
+        nft "add set inet $TABLE $RUSSIA_SET { type ipv4_addr; flags interval; }" || return 1
+    fi
+
+    if ! nft list chain inet "$TABLE" "$CHAIN" >/dev/null 2>&1; then
+        log "Creating chain $CHAIN"
+        nft "add chain inet $TABLE $CHAIN { type nat hook prerouting priority dstnat + 10; policy accept; }" || return 1
+    fi
+
+    if ! nft list chain inet "$TABLE" "$CHAIN" 2>/dev/null |
+        grep -q "ip saddr $LAN_NET ip daddr @$SET tcp dport 443 redirect to :$PORT"; then
+        log "Adding Telegram redirect rule"
+        nft "add rule inet $TABLE $CHAIN ip saddr $LAN_NET ip daddr @$SET tcp dport 443 redirect to :$PORT" || return 1
+    fi
+
+    if ! nft list chain inet "$TABLE" "$CHAIN" 2>/dev/null |
+        grep -q "ip saddr $LAN_NET ip daddr @$RUSSIA_SET tcp dport 443 redirect to :$PORT"; then
+        log "Adding Russia/inside redirect rule"
+        nft "add rule inet $TABLE $CHAIN ip saddr $LAN_NET ip daddr @$RUSSIA_SET tcp dport 443 redirect to :$PORT" || return 1
+    fi
+
+    return 0
+}
+
+download_list() {
+    log "Downloading Telegram IPv4 list..."
+    rm -f "$TMP"
+
+    ok=0
+    for i in 1 2 3 4 5 6; do
+        if wget -qO "$TMP" "$URL"; then
+            ok=1
+            break
+        fi
+        log "Download attempt $i failed, waiting for network..."
+        sleep 5
+    done
+
+    if [ "$ok" -ne 1 ]; then
+        log "ERROR: failed to download Telegram list after retries"
+        rm -f "$TMP"
+        return 1
+    fi
+
+    sed -i 's/\r$//' "$TMP"
+    sed -i '/^[[:space:]]*$/d' "$TMP"
+
+    COUNT="$(wc -l < "$TMP")"
+    if [ "$COUNT" -lt 1 ]; then
+        log "ERROR: downloaded list is empty"
+        rm -f "$TMP"
+        return 1
+    fi
+
+    if ! awk '
+        /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\/[0-9]+$/ { next }
+        { exit 1 }
+    ' "$TMP"; then
+        log "ERROR: invalid CIDR found in downloaded list"
+        rm -f "$TMP"
+        return 1
+    fi
+
+    log "Downloaded $COUNT Telegram subnets"
+    return 0
+}
+
+update_set() {
+    log "Preparing atomic Telegram nft update..."
+    rm -f "$BATCH"
+    {
+        echo "flush set inet $TABLE $SET"
+        printf "add element inet %s %s { " "$TABLE" "$SET"
+        awk '
+        {
+            if (NR > 1)
+                printf ", "
+            printf "%s", $0
+        }
+        END {
+            print " }"
+        }
+        ' "$TMP"
+    } > "$BATCH"
+
+    log "Checking nft ruleset..."
+    if ! nft -c -f "$BATCH" >/dev/null 2>&1; then
+        log "ERROR: nft validation failed"
+        rm -f "$BATCH" "$TMP"
+        return 1
+    fi
+
+    log "Applying Telegram subnet list..."
+    if ! nft -f "$BATCH"; then
+        log "ERROR: nft update failed"
+        rm -f "$BATCH" "$TMP"
+        return 1
+    fi
+
+    rm -f "$BATCH" "$TMP"
+    log "Telegram subnet list updated successfully"
+    return 0
+}
+
+start() {
+    log "Starting..."
+    if ! ensure_rules; then
+        log "ERROR: failed to create/restore nft rules"
+        return 1
+    fi
+    if ! download_list; then
+        log "WARNING: keeping existing Telegram subnet list"
+        return 0
+    fi
+    if ! update_set; then
+        log "WARNING: keeping existing Telegram subnet list"
+        return 0
+    fi
+    log "Done"
+}
+
+restart() {
+    log "Restart/update..."
+    if ! ensure_rules; then
+        log "ERROR: failed to create/restore nft rules"
+        return 1
+    fi
+    if ! download_list; then
+        log "WARNING: old Telegram subnet list preserved"
+        return 0
+    fi
+    if ! update_set; then
+        log "WARNING: old Telegram subnet list preserved"
+        return 0
+    fi
+    log "Restart/update complete"
+}
+
+stop() {
+    log "Stopping..."
+    # НИКОГДА не удаляем table inet xray.
+    # Таблица общая: telegram4 — xray-nft, russia4 — dnsmasq.
+    # Удаление таблицы уничтожило бы оба механизма.
+    log "Leaving shared table inet $TABLE intact"
+}
