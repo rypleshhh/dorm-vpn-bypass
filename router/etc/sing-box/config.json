@@ -1,0 +1,18 @@
+{
+  "log": { "level": "warn" },
+  "inbounds": [
+    { "type": "socks", "tag": "socks-in", "listen": "127.0.0.1", "listen_port": 1080 }
+  ],
+  "outbounds": [
+    {
+      "type": "hysteria2",
+      "tag": "hy2",
+      "server": "YOUR_VPS_IP",
+      "server_ports": ["520:540"],
+      "hop_interval": "30s",
+      "password": "YOUR_HY2_PASSWORD",
+      "tls": { "enabled": true, "server_name": "YOUR_DOMAIN", "alpn": ["h3"] }
+    }
+  ],
+  "route": { "final": "hy2" }
+}

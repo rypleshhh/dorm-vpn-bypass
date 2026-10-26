@@ -36,6 +36,12 @@ ensure_rules() {
         log "Creating chain $CHAIN"
         nft "add chain inet $TABLE $CHAIN { type filter hook prerouting priority mangle - 10; policy accept; }" || return 1
     fi
+    # QUIC мимо туннеля: fw4 (правило Reject-QUIC) отклонит его,
+    # и браузер уйдёт на TCP. insert, чтобы стоял раньше tproxy.
+    if ! nft list chain inet "$TABLE" "$CHAIN" 2>/dev/null | grep -q "udp dport 443"; then
+        log "Adding QUIC bypass rule"
+        nft "insert rule inet $TABLE $CHAIN ip saddr $LAN_NET udp dport 443 counter return" || return 1
+    fi
     if ! nft list chain inet "$TABLE" "$CHAIN" 2>/dev/null | grep -q "ip saddr $LAN_NET udp dport 53 accept"; then
         log "Adding DNS bypass rule"
         nft "add rule inet $TABLE $CHAIN ip saddr $LAN_NET udp dport 53 accept" || return 1

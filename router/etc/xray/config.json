@@ -76,33 +76,14 @@
       "tag": "proxy"
     },
     {
-      "protocol": "vless",
+      "protocol": "socks",
       "settings": {
-        "vnext": [
+        "servers": [
           {
-            "address": "YOUR_VPS_IP",
-            "port": 443,
-            "users": [
-              {
-                "id": "YOUR_UUID",
-                "encryption": "none"
-              }
-            ]
+            "address": "127.0.0.1",
+            "port": 1080
           }
         ]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "reality",
-        "realitySettings": {
-          "fingerprint": "firefox",
-          "serverName": "www.idealo.de",
-          "publicKey": "YOUR_REALITY_PUBLIC_KEY",
-          "shortId": "YOUR_SHORT_ID"
-        },
-        "sockopt": {
-          "tcpFastOpen": true
-        }
       },
       "tag": "proxy-udp"
     },

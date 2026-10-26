@@ -1,0 +1,15 @@
+# Сервер hysteria2. Слушает один порт; диапазон для port hopping
+# заворачивается на него правилом в ufw (vps/etc/ufw/before.rules.nat).
+listen: :123
+
+# Нужен настоящий сертификат на домен, который смотрит на VPS:
+# клиенты проверяют его по server_name. Для выпуска и продления
+# через ACME должен быть открыт 80/tcp (443/tcp занят Xray).
+acme:
+  domains:
+    - YOUR_DOMAIN
+  email: YOUR_EMAIL
+
+auth:
+  type: password
+  password: YOUR_HY2_PASSWORD

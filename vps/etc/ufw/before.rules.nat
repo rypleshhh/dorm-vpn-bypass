@@ -1,0 +1,7 @@
+# Вставить в самое начало /etc/ufw/before.rules (до *filter), затем ufw reload.
+# Port hopping: роутер ходит на 520-540, hysteria слушает только 123.
+# REDIRECT срабатывает до фильтра, поэтому ufw видит уже 123/udp.
+*nat
+:PREROUTING ACCEPT [0:0]
+-A PREROUTING -i ens1 -p udp --dport 520:540 -j REDIRECT --to-ports 123
+COMMIT
